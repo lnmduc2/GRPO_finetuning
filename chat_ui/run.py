@@ -55,8 +55,6 @@ def init():
         tokenizer=str(Path(__file__).parent.parent / "Heineken_qwen-3-8B_chatbot-v2"),
         max_model_len=1024,
         dtype="float16",
-        cpu_offload_gb=8,
-        gpu_memory_utilization=0.75,
         enforce_eager=True
     )
     

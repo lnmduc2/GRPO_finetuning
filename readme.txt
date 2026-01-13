@@ -1,0 +1,2 @@
+- Merge 4bit k dc, lỗi vllm assertionerror
+- Merge 16bit (local) tràn vram, và merge local ko có config.json => push lên HF bằng unsloth được nhưng pull về bằng vllm ko được
