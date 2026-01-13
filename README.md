@@ -15,3 +15,5 @@ Cuối cùng
 uv run train.py
 ```
 
+Các checkpoint sẽ được lưu ở folder `outputs`
+

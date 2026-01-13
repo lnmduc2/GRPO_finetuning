@@ -544,7 +544,7 @@ training_args = GRPOConfig(
     max_steps = 100,
     save_steps = 5,
     report_to = "none", # Can use Weights & Biases
-    output_dir = "outputs_new",
+    output_dir = "outputs",
     save_total_limit = 3,
 
     # For optional training + evaluation
