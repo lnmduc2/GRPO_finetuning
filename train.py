@@ -1,4 +1,3 @@
-%%writefile train_script.py
 # Load model và tokenizer
 import torch
 from unsloth import FastLanguageModel
@@ -7,18 +6,17 @@ from unsloth import FastLanguageModel
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name = "2Phuong5Nam4/Heineken_qwen-3-8B_chatbot",
     load_in_4bit = True, # False for LoRA 16bit
-    device_map = "balanced",
-    fast_inference = False
+    fast_inference = False,
 )
-print(f"@@template: {tokenizer.chat_template}")
+
         
 import re
 from unsloth.chat_templates import get_chat_template
-from training.sft import DatasetLoader
+from ChatBotSynthetic.training.sft import DatasetLoader
 dataset_config = {
         "dataset": {
-            "train_path": "data/train.jsonl",
-            "validation_path": "data/validation.jsonl",
+            "train_path": "ChatBotSynthetic/data/train.jsonl",
+            "validation_path": "ChatBotSynthetic/data/validation.jsonl",
             "format": "json",  # Note: use "json" not "jsonl" for HF datasets
             "message_field": "messages",
             "text_field": "text"
@@ -557,9 +555,8 @@ training_args = GRPOConfig(
     eval_steps = 5,
 
     metric_for_best_model="eval_loss", # Early stopping config
-
-    fp16 = True,   # <--- Bắt buộc True cho T4
-    bf16 = False,  # <--- Bắt buộc False cho T4
+    fp16 = False,   
+    bf16 = True,  
 )
 
 from transformers import EarlyStoppingCallback

@@ -1,0 +1,4 @@
+.env
+.venv/
+ChatBotSynthetic/
+unsloth_compiled_cache/

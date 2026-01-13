@@ -1,43 +1,34 @@
 #!/bin/bash
 set -e
 
-echo "--- 🛠️ Khởi tạo môi trường ChatBotSynthetic ---"
+echo "--- 🛠 Đang cấu hình môi trường (vLLM đã có sẵn) ---"
 
-# 1. Cài đặt uv nếu chưa có
-if ! command -v uv &> /dev/null; then
-    echo "📦 Đang cài đặt uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    source $HOME/.cargo/env
-fi
+# Cài đặt các gói bổ trợ (KHÔNG cài lại vLLM)
+echo "📦 Đang cài đặt Unsloth và các gói phụ trợ..."
+uv pip install -qqq --upgrade \
+    unsloth triton torchvision bitsandbytes xformers openai pydantic dotenv transformers trl
 
-# 2. Clone và Checkout commit cụ thể
+# Quản lý Repository
 REPO_DIR="ChatBotSynthetic"
 if [ ! -d "$REPO_DIR" ]; then
+    echo "📂 Đang clone repository..."
     git clone https://github.com/2Phuong5Nam4/ChatBotSynthetic.git
 fi
-cd $REPO_DIR
+
+# Vào thư mục để checkout và chạy script
+cd "$REPO_DIR"
+echo "🕒 Đang đồng bộ mã nguồn về commit: 3817791..."
+git fetch origin
 git checkout 38177914ea71bcbbbe0b3edc4ae8fecf799bbfd4
 
-
-# 3. Kiểm tra GPU để chọn vLLM phù hợp
-echo "🔍 Đang check GPU..."
-if nvidia-smi | grep -q "Tesla T4"; then
-    VLLM_SPEC="vllm==0.9.2 triton==3.2.0"
-    echo "✅ Tesla T4 detected: vLLM 0.9.2"
+# Chạy script chuẩn bị dataset
+# Vì đã 'cd' vào ChatBotSynthetic nên đường dẫn là scripts/...
+echo "📊 Đang chạy dataset_prepare.py..."
+if [ -f "scripts/dataset_prepare.py" ]; then
+    uv run scripts/dataset_prepare.py
 else
-    VLLM_SPEC="vllm==0.10.2 triton"
-    echo "✅ High-end GPU detected: vLLM 0.10.2"
+    echo "❌ Lỗi: Không tìm thấy file scripts/dataset_prepare.py"
+    exit 1
 fi
 
-# 4. Khởi tạo môi trường ảo và cài đặt dependencies
-echo "🚀 Đang build venv và sync dependencies..."
-uv venv
-# Inject vLLM version vào và install mọi thứ
-uv add $VLLM_SPEC
-uv sync
-
-# 6. Chạy script dataset prepare
-echo "📊 Chuẩn bị dataset..."
-uv run scripts/dataset_prepare.py
-
-echo "--- ✨ XONG! Chạy 'source .venv/bin/activate' để bắt đầu code. ---"
+echo "--- ✨ HOÀN THÀNH ---"
