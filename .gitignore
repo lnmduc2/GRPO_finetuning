@@ -3,3 +3,4 @@
 ChatBotSynthetic/
 unsloth_compiled_cache/
 outputs/
+__pycache__/
