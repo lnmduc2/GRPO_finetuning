@@ -10,4 +10,4 @@ model, tokenizer = FastLanguageModel.from_pretrained(
     load_in_4bit = True,
 )
 
-model.save_pretrained_merged("Heineken_qwen-3-8B_chatbot-v2", tokenizer, save_method = "merged_16bit")
+model.push_to_hub_merged("Heineken_qwen-3-8B_chatbot-v2", tokenizer, save_method = "merged_16bit", token="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")

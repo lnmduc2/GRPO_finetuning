@@ -6,7 +6,7 @@ echo "--- 🛠 Đang cấu hình môi trường (vLLM đã có sẵn) ---"
 # Cài đặt các gói bổ trợ (KHÔNG cài lại vLLM)
 echo "📦 Đang cài đặt Unsloth và các gói phụ trợ..."
 uv pip install -qqq --upgrade \
-    unsloth triton torchvision bitsandbytes xformers openai pydantic dotenv transformers trl
+    unsloth triton torchvision bitsandbytes xformers openai pydantic dotenv transformers trl nicegui
 
 # Quản lý Repository
 REPO_DIR="ChatBotSynthetic"

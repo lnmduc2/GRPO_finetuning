@@ -6,28 +6,24 @@ if __name__ == '__main__':
     llm = LLM(
         model = "Heineken_qwen-3-8B_chatbot-v2",
         tokenizer = "Heineken_qwen-3-8B_chatbot-v2",
-        max_model_len = 4096,
+        max_model_len = 1024,
         dtype = "float16",
-        cpu_offload_gb = 8 # Offload bớt ra CPU vì 5060 Ti chỉ có 16GiB
+        cpu_offload_gb = 8, # Offload bớt ra CPU vì 5060 Ti chỉ có 16GiB
+        gpu_memory_utilization = 0.75,
     )
     sampling_params = SamplingParams(
         temperature=0.6, 
         top_p=0.95, 
         top_k=20,
-        max_tokens=1024  # Tăng max_tokens để model có thể sinh ra response dài hơn
+        max_tokens=256  # Tăng max_tokens để model có thể sinh ra response dài hơn
     )
-
-    # Các tools có sẵn
-    AVAILABLE_TOOLS = {
-        "tra_cuu_thong_tin": tra_cuu_thong_tin,
-    }
 
     messages = [
     {"role": "system", "content": f"""
 Bạn là nhân viên CSKH Heineken Vietnam đang hỗ trợ trợ khách hàng theo những quy trình có sẵn.
 
 Bạn được quyền access vào các tool có sẵn sau để tra cứu thông tin khách hàng:
-{get_all_tools_info(AVAILABLE_TOOLS)}
+{get_all_tools_info(TOOL_REGISTRY)}
 """}, # Phải có system prompt ở đầu theo như training format
     ]
 
@@ -58,7 +54,7 @@ Bạn được quyền access vào các tool có sẵn sau để tra cứu thôn
             for i, tc in enumerate(tool_calls):
                 tool_name = tc.get("name", "unknown")
                 print(f"  -> Gọi tool '{tool_name}' với params: {tc.get('arguments', {})}")
-                result = execute_tool_call(tc, AVAILABLE_TOOLS)
+                result = execute_tool_call(tc, TOOL_REGISTRY)
                 print(f"  <- Kết quả: {result[:200]}{'...' if len(result) > 200 else ''}")
 
             # Thêm kết quả tool vào messages (gộp tất cả kết quả nếu có nhiều tool calls)
