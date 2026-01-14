@@ -51,9 +51,9 @@ def init():
     print("🚀 Đang khởi tạo model...")
     
     storage['llm'] = LLM(
-        model=str(Path(__file__).parent.parent / "Heineken_qwen-3-8B_chatbot-v2"),
-        tokenizer=str(Path(__file__).parent.parent / "Heineken_qwen-3-8B_chatbot-v2"),
-        max_model_len=1024,
+        model=str(Path(__file__).parent.parent / "NamModel"),
+        tokenizer=str(Path(__file__).parent.parent / "NamModel"),
+        max_model_len=4096,
         dtype="float16",
         quantization="bitsandbytes", 
     )
@@ -134,83 +134,127 @@ def generate_response(user_message: str) -> list:
 def main_page():
     """Trang chính - Chat UI."""
     
-    # Custom CSS
+    # Custom CSS - Heineken Style (Green + White)
     ui.add_head_html('''
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap');
         
-        body { font-family: 'Be Vietnam Pro', sans-serif !important; }
+        :root {
+            --heineken-green: #00843D;
+            --heineken-light-green: #4CAF50;
+            --heineken-dark-green: #006830;
+            --heineken-accent: #8BC34A;
+        }
+        
+        body { 
+            font-family: 'Quicksand', sans-serif !important; 
+            background: #f8faf8;
+        }
         
         .chat-container {
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            background: linear-gradient(180deg, #ffffff 0%, #e8f5e9 50%, #c8e6c9 100%);
             min-height: 100vh;
         }
         
         .message-user {
-            background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+            background: linear-gradient(135deg, var(--heineken-green) 0%, var(--heineken-light-green) 100%);
             color: white;
-            border-radius: 20px 20px 5px 20px;
-            padding: 12px 18px;
+            border-radius: 24px 24px 6px 24px;
+            padding: 14px 20px;
             max-width: 70%;
             margin-left: auto;
-            box-shadow: 0 4px 15px rgba(0, 184, 148, 0.3);
+            box-shadow: 0 4px 20px rgba(0, 132, 61, 0.25);
+            font-weight: 500;
         }
         
         .message-assistant {
-            background: linear-gradient(135deg, #2d3436 0%, #636e72 100%);
-            color: #dfe6e9;
-            border-radius: 20px 20px 20px 5px;
-            padding: 12px 18px;
+            background: #ffffff;
+            color: #2d3436;
+            border-radius: 24px 24px 24px 6px;
+            padding: 14px 20px;
             max-width: 70%;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e0e0e0;
+            font-weight: 500;
         }
         
         .message-tool {
-            background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);
-            color: white;
-            border-radius: 12px;
-            padding: 12px 18px;
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            color: var(--heineken-dark-green);
+            border-radius: 16px;
+            padding: 14px 20px;
             max-width: 85%;
-            font-family: 'Fira Code', monospace;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
             font-size: 0.85em;
-            box-shadow: 0 4px 15px rgba(108, 92, 231, 0.3);
+            box-shadow: 0 4px 15px rgba(0, 132, 61, 0.15);
+            border: 1px solid var(--heineken-accent);
         }
         
         .chat-header {
-            background: linear-gradient(90deg, #d63031 0%, #e17055 100%);
-            padding: 20px;
-            border-radius: 0 0 30px 30px;
-            box-shadow: 0 4px 20px rgba(214, 48, 49, 0.4);
+            background: linear-gradient(135deg, var(--heineken-green) 0%, var(--heineken-dark-green) 100%);
+            padding: 24px;
+            border-radius: 0 0 40px 40px;
+            box-shadow: 0 8px 32px rgba(0, 132, 61, 0.3);
         }
         
         .input-area {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 25px;
-            padding: 8px;
+            background: #ffffff;
+            border-radius: 30px;
+            padding: 10px 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+            border: 2px solid #e8f5e9;
+        }
+        
+        .input-area:focus-within {
+            border-color: var(--heineken-green);
+            box-shadow: 0 4px 24px rgba(0, 132, 61, 0.2);
         }
         
         .send-btn {
-            background: linear-gradient(135deg, #d63031 0%, #e17055 100%) !important;
+            background: linear-gradient(135deg, var(--heineken-green) 0%, var(--heineken-light-green) 100%) !important;
             border-radius: 50% !important;
-            width: 50px !important;
-            height: 50px !important;
+            width: 52px !important;
+            height: 52px !important;
+            transition: all 0.3s ease !important;
         }
         
         .send-btn:hover {
-            transform: scale(1.1);
-            box-shadow: 0 4px 20px rgba(214, 48, 49, 0.5);
+            transform: scale(1.1) rotate(15deg);
+            box-shadow: 0 6px 24px rgba(0, 132, 61, 0.4);
+        }
+        
+        /* Star decoration */
+        .chat-header::before {
+            content: "★";
+            position: absolute;
+            font-size: 120px;
+            color: rgba(255, 255, 255, 0.08);
+            right: 20px;
+            top: -20px;
+        }
+        
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #e8f5e9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--heineken-green);
+            border-radius: 4px;
         }
     </style>
     ''')
     
     with ui.column().classes('w-full min-h-screen chat-container'):
         # Header
-        with ui.row().classes('w-full chat-header items-center justify-center'):
-            ui.image('https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Heineken_logo.svg/1200px-Heineken_logo.svg.png').classes('w-32')
-            with ui.column().classes('ml-4'):
-                ui.label('Heineken Vietnam').classes('text-2xl font-bold text-white')
-                ui.label('Hệ thống Chăm Sóc Khách Hàng AI').classes('text-sm text-white/80')
+        with ui.row().classes('w-full chat-header items-center justify-center relative overflow-hidden'):
+            ui.label('★').classes('absolute text-9xl text-white/10 -right-4 -top-8')
+            ui.image('https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Heineken_logo.svg/1200px-Heineken_logo.svg.png').classes('w-36 drop-shadow-lg')
+            with ui.column().classes('ml-6'):
+                ui.label('Heineken Vietnam').classes('text-3xl font-bold text-white tracking-wide')
+                ui.label('Hệ thống Chăm Sóc Khách Hàng AI').classes('text-sm text-white/90 font-medium')
         
         # Chat area
         chat_container = ui.scroll_area().classes('flex-grow w-full max-w-4xl mx-auto p-4')
@@ -219,12 +263,12 @@ def main_page():
             messages_column = ui.column().classes('w-full gap-3')
         
         # Input area
-        with ui.row().classes('w-full max-w-4xl mx-auto p-4 input-area mb-4 items-center'):
+        with ui.row().classes('w-full max-w-4xl mx-auto p-4 input-area mb-6 items-center'):
             user_input = ui.input(placeholder='Nhập tin nhắn...').classes(
-                'flex-grow bg-transparent border-none text-white'
+                'flex-grow bg-transparent border-none text-gray-800'
             ).props('borderless dense')
             
-            spinner = ui.spinner('dots', size='lg', color='white').classes('hidden')
+            spinner = ui.spinner('dots', size='lg', color='green').classes('hidden')
             send_button = ui.button(icon='send').classes('send-btn text-white')
         
         async def send_message():
