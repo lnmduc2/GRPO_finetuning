@@ -12,22 +12,46 @@ if multiprocessing.get_start_method(allow_none=True) != "spawn":
     except RuntimeError:
         pass  # Already set
 
+import re
 from nicegui import ui, app
 from vllm import LLM, SamplingParams
-from ChatBotSynthetic.synthetic_pipeline.mock_tools import TOOL_REGISTRY
+from ChatBotSynthetic.synthetic_pipeline.mock_tools import MockTools
 from utils import get_all_tools_info, format_conversation_template, parse_tool_calls, execute_tool_call
+
+TOOL_REGISTRY = {
+    "tra_cuu_thong_tin": MockTools.tra_cuu_thong_tin,
+    "kiem_tra_mqh": MockTools.kiem_tra_mqh,
+    "kiem_tra_don_hang": MockTools.kiem_tra_don_hang, 
+    "tao_ticket": MockTools.tao_ticket,
+    "gui_huong_dan": MockTools.gui_huong_dan,
+}
+
+def parse_think_tags(text: str) -> tuple[str | None, str]:
+    """Parse <think>...</think> tags from response.
+    Returns: (thinking_content, main_response)
+    """
+    pattern = r'<think>(.*?)</think>'
+    match = re.search(pattern, text, re.DOTALL)
+    
+    if match:
+        thinking = match.group(1).strip()
+        # Remove the think tags and get the main response
+        main_response = re.sub(pattern, '', text, flags=re.DOTALL).strip()
+        return thinking, main_response
+    
+    return None, text.strip()
 
 
 # =============================================================================
 # LƯU MODEL VÀO app OBJECT - persist qua re-execution vì app được cache trong sys.modules
+# Messages sẽ được tạo mới mỗi lần load page (F5 = reset conversation)
 # =============================================================================
-def get_storage():
-    """Lấy storage từ app object (persist qua runpy re-execution)."""
+def get_model_storage():
+    """Lấy model storage từ app object (persist qua runpy re-execution)."""
     if not hasattr(app, '_model_storage'):
         app._model_storage = {
             'llm': None,
             'sampling_params': None,
-            'messages': [],
             'initialized': False
         }
     return app._model_storage
@@ -35,13 +59,26 @@ def get_storage():
 
 def is_initialized():
     """Check xem model đã được init chưa."""
-    storage = get_storage()
+    storage = get_model_storage()
     return storage['initialized'] and storage['llm'] is not None
+
+
+def get_system_prompt():
+    """Tạo system prompt với tool info."""
+    return f"""Bạn là nhân viên CSKH Heineken Vietnam đang hỗ trợ trợ khách hàng theo những quy trình có sẵn.
+
+Bạn được quyền access vào các tool có sẵn sau để tra cứu thông tin khách hàng:
+{get_all_tools_info(TOOL_REGISTRY)}"""
+
+
+def create_new_conversation():
+    """Tạo conversation mới với system prompt."""
+    return [{"role": "system", "content": get_system_prompt()}]
 
 
 def init():
     """Khởi tạo model và các tham số."""
-    storage = get_storage()
+    storage = get_model_storage()
     
     # Check nếu đã init rồi thì skip
     if is_initialized():
@@ -65,23 +102,21 @@ def init():
         max_tokens=1024
     )
     
-    # System prompt
-    storage['messages'] = [
-        {"role": "system", "content": f"""
-Bạn là nhân viên CSKH Heineken Vietnam đang hỗ trợ trợ khách hàng theo những quy trình có sẵn.
-
-Bạn được quyền access vào các tool có sẵn sau để tra cứu thông tin khách hàng:
-{get_all_tools_info(TOOL_REGISTRY)}
-"""}
-    ]
-    
     storage['initialized'] = True
     print("✅ Model đã sẵn sàng!")
 
 
-def generate_response(user_message: str) -> list:
-    """Generate response từ LLM và xử lý tool calls."""
-    storage = get_storage()
+def generate_response(user_message: str, messages: list) -> list:
+    """Generate response từ LLM và xử lý tool calls.
+    
+    Args:
+        user_message: Tin nhắn từ user
+        messages: List conversation messages (sẽ được modify in-place)
+    
+    Returns:
+        List of (role, content) tuples for UI display
+    """
+    storage = get_model_storage()
     
     if not is_initialized():
         raise RuntimeError("Model chưa được khởi tạo!")
@@ -89,8 +124,8 @@ def generate_response(user_message: str) -> list:
     responses = []
     
     # Thêm tin nhắn user
-    storage['messages'].append({"role": "user", "content": user_message})
-    current_conversation = format_conversation_template(storage['messages'])
+    messages.append({"role": "user", "content": user_message})
+    current_conversation = format_conversation_template(messages)
     
     # Generate response
     outputs = storage['llm'].generate(current_conversation, storage['sampling_params'])
@@ -109,21 +144,25 @@ def generate_response(user_message: str) -> list:
             params = tc.get("arguments", {})
             result = execute_tool_call(tc, TOOL_REGISTRY)
             all_results.append(result)
-            tool_info.append(f"🔧 Tool: {tool_name}\n📥 Params: {params}\n📤 Result: {result[:300]}{'...' if len(result) > 300 else ''}")
+            tool_info.append({
+                "name": tool_name,
+                "params": params,
+                "result": result[:500] + ('...' if len(result) > 500 else '')
+            })
         
-        responses.append(("tool", "\n---\n".join(tool_info)))
+        responses.append(("tool", tool_info))
         
         combined_result = "\n---\n".join(all_results)
-        storage['messages'].append({"role": "tool", "content": combined_result})
+        messages.append({"role": "tool", "content": combined_result})
         
-        current_conversation = format_conversation_template(storage['messages'])
+        current_conversation = format_conversation_template(messages)
         outputs = storage['llm'].generate(current_conversation, storage['sampling_params'])
         response = outputs[0].outputs[0].text
         responses.append(("assistant", response))
         
         tool_calls = parse_tool_calls(response)
     
-    storage['messages'].append({"role": "assistant", "content": response})
+    messages.append({"role": "assistant", "content": response})
     return responses
 
 
@@ -190,6 +229,84 @@ def main_page():
             border: 1px solid var(--heineken-accent);
         }
         
+        /* Thinking dropdown styles - ChatGPT style */
+        .thinking-dropdown {
+            max-width: 85%;
+            margin: 8px 0;
+        }
+        
+        .thinking-dropdown .q-expansion-item {
+            background: #fafafa !important;
+            border-radius: 16px !important;
+            border: 1px solid #e0e0e0 !important;
+            overflow: hidden;
+        }
+        
+        .thinking-dropdown .q-expansion-item__container {
+            background: transparent !important;
+        }
+        
+        .thinking-dropdown .q-item {
+            padding: 12px 16px !important;
+            min-height: 48px !important;
+        }
+        
+        .thinking-dropdown .q-item__section--avatar {
+            min-width: 32px !important;
+            padding-right: 12px !important;
+        }
+        
+        .thinking-dropdown .q-expansion-item__content {
+            background: #f5f5f5 !important;
+            border-top: 1px solid #e8e8e8 !important;
+        }
+        
+        .thinking-content {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.8em;
+            color: #555;
+            padding: 12px 16px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.6;
+        }
+        
+        .thinking-header-text {
+            color: #666;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+        
+        .thinking-icon {
+            color: #f59e0b;
+        }
+        
+        .tool-icon {
+            color: var(--heineken-green);
+        }
+        
+        /* Thinking specific styles */
+        .thinking-dropdown .q-expansion-item {
+            background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%) !important;
+            border: 1px solid #fcd34d !important;
+        }
+        
+        .thinking-dropdown .q-expansion-item__content {
+            background: #fffef5 !important;
+            border-top: 1px solid #fcd34d !important;
+        }
+        
+        /* Tool dropdown styles */
+        .tool-dropdown .q-expansion-item {
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%) !important;
+            border: 1px solid var(--heineken-accent) !important;
+        }
+        
+        .tool-dropdown .q-expansion-item__content {
+            background: #f8fff8 !important;
+            border-top: 1px solid var(--heineken-accent) !important;
+        }
+        
         .chat-header {
             background: linear-gradient(135deg, var(--heineken-green) 0%, var(--heineken-dark-green) 100%);
             padding: 24px;
@@ -247,6 +364,9 @@ def main_page():
     </style>
     ''')
     
+    # Tạo conversation mới cho mỗi page load (F5 = reset)
+    conversation_messages = create_new_conversation()
+    
     with ui.column().classes('w-full min-h-screen chat-container'):
         # Header
         with ui.row().classes('w-full chat-header items-center justify-center relative overflow-hidden'):
@@ -287,16 +407,67 @@ def main_page():
             send_button.disable()
             
             try:
-                responses = await asyncio.to_thread(generate_response, message)
+                responses = await asyncio.to_thread(generate_response, message, conversation_messages)
                 
                 with messages_column:
                     for role, content in responses:
                         if role == "assistant":
-                            with ui.row().classes('w-full justify-start'):
-                                ui.label(content).classes('message-assistant')
+                            # Parse thinking from response
+                            thinking, main_response = parse_think_tags(content)
+                            
+                            if thinking:
+                                # Show thinking in collapsible dropdown
+                                with ui.row().classes('w-full justify-start thinking-dropdown'):
+                                    with ui.expansion(
+                                        text='',
+                                        icon='psychology',
+                                        value=False  # Collapsed by default
+                                    ).classes('w-full') as expansion:
+                                        expansion._props['header-class'] = 'thinking-header'
+                                        expansion._props['expand-icon-class'] = 'text-gray-500'
+                                        
+                                        with expansion.add_slot('header'):
+                                            with ui.row().classes('items-center gap-2'):
+                                                ui.icon('lightbulb', size='sm').classes('thinking-icon')
+                                                ui.label('Suy nghĩ...').classes('thinking-header-text')
+                                        
+                                        # Thinking content
+                                        with ui.column().classes('thinking-content w-full'):
+                                            ui.label(thinking).classes('text-sm text-gray-600 whitespace-pre-wrap')
+                            
+                            # Show main response
+                            if main_response:
+                                with ui.row().classes('w-full justify-start'):
+                                    ui.label(main_response).classes('message-assistant')
                         elif role == "tool":
-                            with ui.row().classes('w-full justify-center'):
-                                ui.label(content).classes('message-tool whitespace-pre-wrap')
+                            # Tool dropdown - collapsible
+                            tool_list = content  # Now a list of dicts
+                            tool_count = len(tool_list)
+                            tool_names = ', '.join([t['name'] for t in tool_list])
+                            
+                            with ui.row().classes('w-full justify-start thinking-dropdown tool-dropdown'):
+                                with ui.expansion(
+                                    text='',
+                                    icon='build',
+                                    value=False  # Collapsed by default
+                                ).classes('w-full') as expansion:
+                                    # Custom header
+                                    expansion._props['header-class'] = 'tool-header'
+                                    expansion._props['expand-icon-class'] = 'text-gray-500'
+                                    
+                                    with expansion.add_slot('header'):
+                                        with ui.row().classes('items-center gap-2'):
+                                            ui.icon('construction', size='sm').classes('tool-icon')
+                                            ui.label(f'Đã dùng {tool_count} tool: {tool_names}').classes('thinking-header-text')
+                                    
+                                    # Tool content inside expansion - formatted nicely
+                                    with ui.column().classes('thinking-content w-full gap-3'):
+                                        for tool in tool_list:
+                                            with ui.card().classes('w-full bg-white/50'):
+                                                ui.label(f"🔧 {tool['name']}").classes('font-bold text-green-800')
+                                                ui.label(f"📥 Params: {tool['params']}").classes('text-xs text-gray-600')
+                                                with ui.scroll_area().classes('max-h-32'):
+                                                    ui.label(f"📤 Result: {tool['result']}").classes('text-xs text-gray-700 whitespace-pre-wrap')
                 
                 chat_container.scroll_to(percent=1.0)
                 

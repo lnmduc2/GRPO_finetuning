@@ -3,6 +3,59 @@ import json
 import inspect
 from typing import get_type_hints, Callable
 
+def get_tool_info(tool_func: Callable) -> str:
+    # Lấy tên function
+    tool_name = tool_func.__name__
+    
+    # Lấy docstring
+    docstring = inspect.getdoc(tool_func) or "Không có mô tả."
+    
+    # Lấy signature và type hints
+    sig = inspect.signature(tool_func)
+    try:
+        type_hints = get_type_hints(tool_func)
+    except Exception:
+        type_hints = {}
+    
+    # Xây dựng input schema
+    input_params = []
+    for param_name, param in sig.parameters.items():
+        param_type = type_hints.get(param_name, "Any")
+        if hasattr(param_type, "__name__"):
+            param_type = param_type.__name__
+        elif hasattr(param_type, "_name"):  # For typing generics like Optional
+            param_type = str(param_type)
+        
+        # Kiểm tra default value
+        if param.default is inspect.Parameter.empty:
+            default_str = "(required)"
+        elif param.default is None:
+            default_str = "(optional, default=None)"
+        else:
+            default_str = f"(optional, default={repr(param.default)})"
+        
+        input_params.append(f"    - {param_name}: {param_type} {default_str}")
+    
+    input_schema = "\n".join(input_params) if input_params else "    Không có tham số"
+    
+    # Lấy output schema (return type)
+    return_type = type_hints.get("return", "Any")
+    if hasattr(return_type, "__name__"):
+        output_schema = return_type.__name__
+    elif hasattr(return_type, "_name"):
+        output_schema = str(return_type)
+    else:
+        output_schema = str(return_type)
+    
+    # Format output string
+    tool_info = f"""Tool: {tool_name}
+Mô tả: {docstring}
+Input Schema:
+{input_schema}
+Output Schema: {output_schema}"""
+    
+    return tool_info
+
 def get_all_tools_info(available_tools: dict) -> str:
     """
     Lấy thông tin của tất cả tools để làm context cho LLM.
@@ -13,59 +66,6 @@ def get_all_tools_info(available_tools: dict) -> str:
     Returns:
         str: String chứa thông tin của tất cả tools
     """
-    def get_tool_info(tool_func: Callable) -> str:
-        # Lấy tên function
-        tool_name = tool_func.__name__
-        
-        # Lấy docstring
-        docstring = inspect.getdoc(tool_func) or "Không có mô tả."
-        
-        # Lấy signature và type hints
-        sig = inspect.signature(tool_func)
-        try:
-            type_hints = get_type_hints(tool_func)
-        except Exception:
-            type_hints = {}
-        
-        # Xây dựng input schema
-        input_params = []
-        for param_name, param in sig.parameters.items():
-            param_type = type_hints.get(param_name, "Any")
-            if hasattr(param_type, "__name__"):
-                param_type = param_type.__name__
-            elif hasattr(param_type, "_name"):  # For typing generics like Optional
-                param_type = str(param_type)
-            
-            # Kiểm tra default value
-            if param.default is inspect.Parameter.empty:
-                default_str = "(required)"
-            elif param.default is None:
-                default_str = "(optional, default=None)"
-            else:
-                default_str = f"(optional, default={repr(param.default)})"
-            
-            input_params.append(f"    - {param_name}: {param_type} {default_str}")
-        
-        input_schema = "\n".join(input_params) if input_params else "    Không có tham số"
-        
-        # Lấy output schema (return type)
-        return_type = type_hints.get("return", "Any")
-        if hasattr(return_type, "__name__"):
-            output_schema = return_type.__name__
-        elif hasattr(return_type, "_name"):
-            output_schema = str(return_type)
-        else:
-            output_schema = str(return_type)
-        
-        # Format output string
-        tool_info = f"""Tool: {tool_name}
-    Mô tả: {docstring}
-    Input Schema:
-    {input_schema}
-    Output Schema: {output_schema}"""
-        
-        return tool_info
-
 
     tools_info = []
     for _, tool_func in available_tools.items():
@@ -132,4 +132,11 @@ def execute_tool_call(tool_call: dict, available_tools: dict) -> str:
         result = available_tools[tool_name](**arguments)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        exception_msg = f"""
+Tool lỗi khi thực thi:
+{str(e)}
+
+Schema đúng của tool này là:
+{get_tool_info(available_tools[tool_name])}
+"""
+        return json.dumps({"error": exception_msg}, ensure_ascii=False)
