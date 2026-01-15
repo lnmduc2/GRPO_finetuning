@@ -1,3 +1,6 @@
+"""
+Standardized frontend for chatbot using LM (vllm inference). Chatbot can call tools and think before generating a response.
+"""
 import sys
 import os
 import multiprocessing

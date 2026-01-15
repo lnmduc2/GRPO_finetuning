@@ -1,3 +1,8 @@
+"""
+Standardized frontend for chatbot using VLM (vllm inference). Chatbot can call tools and think before generating a response.
+
+User can upload multiple images to the chatbot and the chatbot will generate a response based on the images.
+"""
 import sys
 import os
 import multiprocessing
@@ -154,8 +159,8 @@ def init():
     print("🚀 Đang khởi tạo model...")
     
     storage['llm'] = LLM(
-        model="unsloth/Qwen3-VL-4B-Thinking",
-        tokenizer="unsloth/Qwen3-VL-4B-Thinking",
+        model="/root/GRPO_finetuning/Qwen3_4B_VL_thinking_Heineken",
+        tokenizer="/root/GRPO_finetuning/Qwen3_4B_VL_thinking_Heineken",
         max_model_len=12000,
         dtype="float16",
         quantization="bitsandbytes", 

@@ -4,6 +4,7 @@ ChatBotSynthetic/
 unsloth_compiled_cache/
 __pycache__/
 Heineken_qwen-3-8B_chatbot-v2/
+Qwen3_4B_VL_thinking_Heineken/
 # ignore weight folders generated from training
 outputs/
 outputs_qwen3_4B_grpo_qat/
