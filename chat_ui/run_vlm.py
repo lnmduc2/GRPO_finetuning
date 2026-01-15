@@ -31,11 +31,17 @@ if multiprocessing.get_start_method(allow_none=True) != "spawn":
         pass  # Already set
 
 import re
+import jinja2
 from nicegui import ui, app
 from vllm import LLM, SamplingParams
 from ChatBotSynthetic.synthetic_pipeline.mock_tools import MockTools
 from utils import get_all_tools_info, parse_tool_calls, execute_tool_call
 from PIL import Image
+
+# Load Jinja2 chat template từ file chính thức của Unsloth
+TEMPLATE_PATH = Path(__file__).parent.parent / "vlm_chat_template.jinja"
+with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+    CHAT_TEMPLATE = jinja2.Template(f.read())
 
 MAX_PASTED_IMAGES = 4
 IMAGE_PLACEHOLDER = "<image>"
@@ -51,14 +57,25 @@ TOOL_REGISTRY = {
 def parse_think_tags(text: str) -> tuple[str | None, str]:
     """Parse <think>...</think> tags from response.
     Returns: (thinking_content, main_response)
+    
+    Handles 2 cases:
+    1. Full tags: <think>content</think>main_response
+    2. Only closing tag: content</think>main_response (vì opening tag đã có trong prompt từ jinja template)
     """
-    pattern = r'<think>(.*?)</think>'
-    match = re.search(pattern, text, re.DOTALL)
+    # Case 1: Full tags <think>...</think>
+    pattern_full = r'<think>(.*?)</think>'
+    match = re.search(pattern_full, text, re.DOTALL)
     
     if match:
         thinking = match.group(1).strip()
-        # Remove the think tags and get the main response
-        main_response = re.sub(pattern, '', text, flags=re.DOTALL).strip()
+        main_response = re.sub(pattern_full, '', text, flags=re.DOTALL).strip()
+        return thinking, main_response
+    
+    # Case 2: Only closing tag </think> (opening tag is in prompt)
+    if '</think>' in text:
+        parts = text.split('</think>', 1)
+        thinking = parts[0].strip()
+        main_response = parts[1].strip() if len(parts) > 1 else ''
         return thinking, main_response
     
     return None, text.strip()
@@ -115,52 +132,14 @@ def data_url_to_image(data_url: str) -> Image.Image:
     return Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
 
-def render_content_qwen3_vl(content) -> str:
-    """Render content with Qwen3-VL vision tokens."""
-    if isinstance(content, str):
-        return content
-    parts = []
-    for item in content:
-        if isinstance(item, dict):
-            item_type = item.get("type")
-            if item_type == "image" or "image" in item or "image_url" in item:
-                parts.append("<|vision_start|><|image_pad|><|vision_end|>")
-            elif item_type == "video" or "video" in item:
-                parts.append("<|vision_start|><|video_pad|><|vision_end|>")
-            elif "text" in item:
-                parts.append(item["text"])
-    return "".join(parts)
-
-
-def format_conversation_template_qwen3_vl(messages: list) -> str:
-    """Format messages to Qwen3-VL template (vision aware)."""
-    full_string = ""
-    if messages and messages[0]["role"] == "system":
-        full_string += (
-            "<|im_start|>system\n"
-            + render_content_qwen3_vl(messages[0]["content"])
-            + "<|im_end|>\n"
-        )
-        start_index = 1
-    else:
-        start_index = 0
-
-    for msg in messages[start_index:]:
-        role = msg["role"]
-        content = render_content_qwen3_vl(msg["content"])
-        if role == "user":
-            full_string += f"<|im_start|>user\n{content}<|im_end|>\n"
-        elif role == "assistant":
-            full_string += f"<|im_start|>assistant\n{content}<|im_end|>\n"
-        elif role in ["tool", "observation"]:
-            full_string += (
-                "<|im_start|>user\n<tool_response>\n"
-                + content
-                + "\n</tool_response><|im_end|>\n"
-            )
-
-    full_string += "<|im_start|>assistant\n"
-    return full_string
+def format_conversation_template_qwen3_vl(messages: list, tools: list | None = None) -> str:
+    """Format messages using official Unsloth Jinja2 template."""
+    return CHAT_TEMPLATE.render(
+        messages=messages,
+        tools=tools,
+        add_generation_prompt=True,
+        add_vision_id=False,
+    )
 
 
 def init():
