@@ -6,6 +6,22 @@ import asyncio
 import base64
 import io
 
+import traceback # Thêm dòng này vào đầu file cùng các import khác
+
+# Hàm mới: thêm vào bên cạnh các hàm helper khác
+def make_thumbnail(data_url: str, size=(200, 200)) -> str:
+    """Tạo thumbnail nhỏ từ base64 gốc để hiển thị UI không bị lag/crash."""
+    try:
+        if not data_url: return ""
+        img = data_url_to_image(data_url)
+        img.thumbnail(size)
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG", quality=70)
+        return "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode()
+    except Exception:
+        # Nếu lỗi resize thì trả về luôn ảnh gốc (fallback)
+        return data_url
+
 # QUAN TRỌNG: Set spawn method TRƯỚC khi import bất cứ thứ gì liên quan đến CUDA
 # Phải nằm ngoài mọi if/else để chạy ngay khi import module
 if multiprocessing.get_start_method(allow_none=True) != "spawn":
@@ -178,75 +194,88 @@ def init():
 
 
 def generate_response(user_message: str, messages: list, image_data_urls: list | None = None) -> list:
-    """Generate response từ LLM và xử lý tool calls.
-    
-    Args:
-        user_message: Tin nhắn từ user
-        messages: List conversation messages (sẽ được modify in-place)
-        image_data_urls: List of pasted image data URLs
-    
-    Returns:
-        List of (role, content) tuples for UI display
-    """
+    """Generate response từ LLM và xử lý tool calls."""
     storage = get_model_storage()
     
     if not is_initialized():
-        raise RuntimeError("Model chưa được khởi tạo!")
+        return [("assistant", "❌ Lỗi: Model chưa được khởi tạo.")]
     
     responses = []
     
-    # Thêm tin nhắn user với image placeholders (Qwen3-VL template)
-    image_data_urls = image_data_urls or []
-    user_content = build_user_content_items(user_message, len(image_data_urls))
-    messages.append({"role": "user", "content": user_content})
-    current_conversation = format_conversation_template_qwen3_vl(messages)
-    
-    # Generate response
-    if image_data_urls:
-        images = [data_url_to_image(url) for url in image_data_urls]
-        generate_input = {
-            "prompt": current_conversation,
-            "multi_modal_data": {"image": images},
-        }
-        outputs = storage['llm'].generate(generate_input, storage['sampling_params'])
-    else:
-        outputs = storage['llm'].generate(current_conversation, storage['sampling_params'])
-    response = outputs[0].outputs[0].text
-    responses.append(("assistant", response))
-    
-    # Parse và xử lý tool calls
-    tool_calls = parse_tool_calls(response)
-    
-    while tool_calls:
-        all_results = []
-        tool_info = []
-        
-        for tc in tool_calls:
-            tool_name = tc.get("name", "unknown")
-            params = tc.get("arguments", {})
-            result = execute_tool_call(tc, TOOL_REGISTRY)
-            all_results.append(result)
-            tool_info.append({
-                "name": tool_name,
-                "params": params,
-                "result": result[:500] + ('...' if len(result) > 500 else '')
-            })
-        
-        responses.append(("tool", tool_info))
-        
-        combined_result = "\n---\n".join(all_results)
-        messages.append({"role": "tool", "content": combined_result})
+    try:
+        # Thêm tin nhắn user với image placeholders
+        image_data_urls = image_data_urls or []
+        user_content = build_user_content_items(user_message, len(image_data_urls))
+        messages.append({"role": "user", "content": user_content})
         
         current_conversation = format_conversation_template_qwen3_vl(messages)
-        outputs = storage['llm'].generate(current_conversation, storage['sampling_params'])
+        
+        # --- LOGIC GENERATE LẦN 1 ---
+        if image_data_urls:
+            print(f"🖼️ Đang xử lý {len(image_data_urls)} ảnh...")
+            images = [data_url_to_image(url) for url in image_data_urls]
+            # Input format chuẩn cho vLLM multimodal: List of Dicts
+            generate_input = [{
+                "prompt": current_conversation,
+                "multi_modal_data": {"image": images},
+            }]
+            outputs = storage['llm'].generate(generate_input, storage['sampling_params'])
+        else:
+            # Input format chuẩn cho text: List of Strings (QUAN TRỌNG: Phải bọc trong [])
+            outputs = storage['llm'].generate([current_conversation], storage['sampling_params'])
+            
         response = outputs[0].outputs[0].text
         responses.append(("assistant", response))
         
+        # Parse và xử lý tool calls
         tool_calls = parse_tool_calls(response)
-    
-    messages.append({"role": "assistant", "content": response})
-    return responses
+        
+        # --- VÒNG LẶP XỬ LÝ TOOL ---
+        while tool_calls:
+            all_results = []
+            tool_info = []
+            
+            for tc in tool_calls:
+                tool_name = tc.get("name", "unknown")
+                params = tc.get("arguments", {})
+                
+                # Execute tool
+                result = execute_tool_call(tc, TOOL_REGISTRY)
+                all_results.append(result)
+                
+                # Lưu info để hiển thị UI
+                tool_info.append({
+                    "name": tool_name,
+                    "params": params,
+                    "result": result[:500] + ('...' if len(result) > 500 else '')
+                })
+            
+            # Đẩy tool info ra UI
+            responses.append(("tool", tool_info))
+            
+            # Cập nhật conversation history với kết quả tool
+            combined_result = "\n---\n".join(all_results)
+            messages.append({"role": "tool", "content": combined_result})
+            
+            # Generate tiếp sau khi có kết quả tool
+            current_conversation = format_conversation_template_qwen3_vl(messages)
+            
+            # Khi generate tiếp (thường là text only), vẫn phải bọc list []
+            outputs = storage['llm'].generate([current_conversation], storage['sampling_params'])
+            
+            response = outputs[0].outputs[0].text
+            responses.append(("assistant", response))
+            
+            # Check xem model có gọi tool tiếp không
+            tool_calls = parse_tool_calls(response)
+        
+        # Lưu response cuối cùng vào history
+        messages.append({"role": "assistant", "content": response})
+        return responses
 
+    except Exception as e:
+        traceback.print_exc()
+        return [("assistant", f"❌ Lỗi hệ thống Backend: {str(e)}")]
 
 # =============================================================================
 # UI PAGE - Định nghĩa bằng decorator để NiceGUI quản lý đúng cách
@@ -609,48 +638,60 @@ def main_page():
                 send_button = ui.button(icon='send').classes('send-btn text-white')
         
         async def send_message():
+            # 1. Lấy dữ liệu
             message = (user_input.value or '').strip()
-            image_data_urls = await ui.run_javascript('window.__pendingImages || []')
+            
+            # --- FIX: Tăng timeout lên 30s để kịp nhận ảnh lớn ---
+            image_data_urls = await ui.run_javascript('window.__pendingImages || []', timeout=30.0)
+            
             if not message and not image_data_urls:
                 return
             
+            # 2. Clear Input & Preview ngay lập tức
             user_input.value = ''
+            # Tăng timeout cho lệnh clear đề phòng UI lag
+            await ui.run_javascript('window.__pendingImages = []; renderPreviews();', timeout=5.0)
             
+            # 3. Render tin nhắn User lên UI (Dùng Thumbnail cho ảnh)
             with messages_column:
                 if message:
                     with ui.row().classes('w-full justify-end'):
                         ui.label(message).classes('message-user')
+                
                 if image_data_urls:
                     with ui.row().classes('w-full justify-end'):
                         with ui.row().classes('message-user-images'):
                             for url in image_data_urls:
-                                ui.image(url).classes('user-image-thumb')
+                                # Tạo thumbnail hiển thị cho nhẹ UI
+                                thumb_url = make_thumbnail(url)
+                                ui.image(thumb_url).classes('user-image-thumb')
             
+            # Scroll xuống dưới & Bật spinner
             chat_container.scroll_to(percent=1.0)
             spinner.classes(remove='hidden')
             send_button.disable()
             
             try:
+                # 4. Gọi Backend (Chạy thread riêng để ko block UI)
                 responses = await asyncio.to_thread(
                     generate_response,
                     message,
                     conversation_messages,
-                    image_data_urls,
+                    image_data_urls, 
                 )
                 
+                # 5. Render tin nhắn Assistant & Tool lên UI
                 with messages_column:
                     for role, content in responses:
                         if role == "assistant":
-                            # Parse thinking from response
+                            # Parse thinking logic
                             thinking, main_response = parse_think_tags(content)
                             
+                            # Render Thinking (nếu có)
                             if thinking:
-                                # Show thinking in collapsible dropdown
                                 with ui.row().classes('w-full justify-start thinking-dropdown'):
                                     with ui.expansion(
-                                        text='',
-                                        icon='psychology',
-                                        value=False  # Collapsed by default
+                                        text='', icon='psychology', value=False
                                     ).classes('w-full') as expansion:
                                         expansion._props['header-class'] = 'thinking-header'
                                         expansion._props['expand-icon-class'] = 'text-gray-500'
@@ -660,27 +701,24 @@ def main_page():
                                                 ui.icon('lightbulb', size='sm').classes('thinking-icon')
                                                 ui.label('Suy nghĩ...').classes('thinking-header-text')
                                         
-                                        # Thinking content
                                         with ui.column().classes('thinking-content w-full'):
                                             ui.label(thinking).classes('text-sm text-gray-600 whitespace-pre-wrap')
                             
-                            # Show main response
+                            # Render Main Response
                             if main_response:
                                 with ui.row().classes('w-full justify-start'):
                                     ui.label(main_response).classes('message-assistant')
+                        
                         elif role == "tool":
-                            # Tool dropdown - collapsible
-                            tool_list = content  # Now a list of dicts
+                            # Render Tool Dropdown
+                            tool_list = content
                             tool_count = len(tool_list)
                             tool_names = ', '.join([t['name'] for t in tool_list])
                             
                             with ui.row().classes('w-full justify-start thinking-dropdown tool-dropdown'):
                                 with ui.expansion(
-                                    text='',
-                                    icon='build',
-                                    value=False  # Collapsed by default
+                                    text='', icon='build', value=False
                                 ).classes('w-full') as expansion:
-                                    # Custom header
                                     expansion._props['header-class'] = 'tool-header'
                                     expansion._props['expand-icon-class'] = 'text-gray-500'
                                     
@@ -689,7 +727,6 @@ def main_page():
                                             ui.icon('construction', size='sm').classes('tool-icon')
                                             ui.label(f'Đã dùng {tool_count} tool: {tool_names}').classes('thinking-header-text')
                                     
-                                    # Tool content inside expansion - formatted nicely
                                     with ui.column().classes('thinking-content w-full gap-3'):
                                         for tool in tool_list:
                                             with ui.card().classes('w-full bg-white/50'):
@@ -703,11 +740,121 @@ def main_page():
             except Exception as e:
                 with messages_column:
                     with ui.row().classes('w-full justify-center'):
-                        ui.label(f"❌ Lỗi: {str(e)}").classes('text-red-400')
+                        ui.label(f"❌ Lỗi UI: {str(e)}").classes('text-red-400')
+                traceback.print_exc()
             
             finally:
                 spinner.classes(add='hidden')
                 send_button.enable()
+                # Dọn dẹp pending images lần nữa cho chắc
+                await ui.run_javascript('window.__pendingImages = []; renderPreviews();', timeout=5.0)
+            # 1. Lấy dữ liệu
+            message = (user_input.value or '').strip()
+            image_data_urls = await ui.run_javascript('window.__pendingImages || []')
+            
+            if not message and not image_data_urls:
+                return
+            
+            # 2. Clear Input & Preview ngay lập tức
+            user_input.value = ''
+            await ui.run_javascript('window.__pendingImages = []; renderPreviews();')
+            
+            # 3. Render tin nhắn User lên UI (Dùng Thumbnail cho ảnh)
+            with messages_column:
+                if message:
+                    with ui.row().classes('w-full justify-end'):
+                        ui.label(message).classes('message-user')
+                
+                if image_data_urls:
+                    with ui.row().classes('w-full justify-end'):
+                        with ui.row().classes('message-user-images'):
+                            for url in image_data_urls:
+                                # FIX: Tạo thumbnail nhỏ để hiển thị UI mượt hơn
+                                thumb_url = make_thumbnail(url)
+                                ui.image(thumb_url).classes('user-image-thumb')
+            
+            # Scroll xuống dưới & Bật spinner
+            chat_container.scroll_to(percent=1.0)
+            spinner.classes(remove='hidden')
+            send_button.disable()
+            
+            try:
+                # 4. Gọi Backend (Chạy thread riêng để ko block UI)
+                # Truyền image_data_urls (ảnh gốc full HD) cho LLM
+                responses = await asyncio.to_thread(
+                    generate_response,
+                    message,
+                    conversation_messages,
+                    image_data_urls, 
+                )
+                
+                # 5. Render tin nhắn Assistant & Tool lên UI
+                with messages_column:
+                    for role, content in responses:
+                        if role == "assistant":
+                            # Parse thinking logic
+                            thinking, main_response = parse_think_tags(content)
+                            
+                            # Render Thinking (nếu có)
+                            if thinking:
+                                with ui.row().classes('w-full justify-start thinking-dropdown'):
+                                    with ui.expansion(
+                                        text='', icon='psychology', value=False
+                                    ).classes('w-full') as expansion:
+                                        expansion._props['header-class'] = 'thinking-header'
+                                        expansion._props['expand-icon-class'] = 'text-gray-500'
+                                        
+                                        with expansion.add_slot('header'):
+                                            with ui.row().classes('items-center gap-2'):
+                                                ui.icon('lightbulb', size='sm').classes('thinking-icon')
+                                                ui.label('Suy nghĩ...').classes('thinking-header-text')
+                                        
+                                        with ui.column().classes('thinking-content w-full'):
+                                            ui.label(thinking).classes('text-sm text-gray-600 whitespace-pre-wrap')
+                            
+                            # Render Main Response
+                            if main_response:
+                                with ui.row().classes('w-full justify-start'):
+                                    ui.label(main_response).classes('message-assistant')
+                        
+                        elif role == "tool":
+                            # Render Tool Dropdown
+                            tool_list = content
+                            tool_count = len(tool_list)
+                            tool_names = ', '.join([t['name'] for t in tool_list])
+                            
+                            with ui.row().classes('w-full justify-start thinking-dropdown tool-dropdown'):
+                                with ui.expansion(
+                                    text='', icon='build', value=False
+                                ).classes('w-full') as expansion:
+                                    expansion._props['header-class'] = 'tool-header'
+                                    expansion._props['expand-icon-class'] = 'text-gray-500'
+                                    
+                                    with expansion.add_slot('header'):
+                                        with ui.row().classes('items-center gap-2'):
+                                            ui.icon('construction', size='sm').classes('tool-icon')
+                                            ui.label(f'Đã dùng {tool_count} tool: {tool_names}').classes('thinking-header-text')
+                                    
+                                    with ui.column().classes('thinking-content w-full gap-3'):
+                                        for tool in tool_list:
+                                            with ui.card().classes('w-full bg-white/50'):
+                                                ui.label(f"🔧 {tool['name']}").classes('font-bold text-green-800')
+                                                ui.label(f"📥 Params: {tool['params']}").classes('text-xs text-gray-600')
+                                                with ui.scroll_area().classes('max-h-32'):
+                                                    ui.label(f"📤 Result: {tool['result']}").classes('text-xs text-gray-700 whitespace-pre-wrap')
+                
+                chat_container.scroll_to(percent=1.0)
+                
+            except Exception as e:
+                with messages_column:
+                    with ui.row().classes('w-full justify-center'):
+                        ui.label(f"❌ Lỗi UI: {str(e)}").classes('text-red-400')
+                traceback.print_exc()
+            
+            finally:
+                spinner.classes(add='hidden')
+                send_button.enable()
+                # Dọn dẹp pending images lần nữa cho chắc
                 await ui.run_javascript('window.__pendingImages = []; renderPreviews();')
         
         send_button.on('click', send_message)
