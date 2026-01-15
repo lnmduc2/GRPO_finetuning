@@ -177,7 +177,7 @@ def init():
     storage['llm'] = LLM(
         model="unsloth/Qwen3-VL-4B-Thinking",
         tokenizer="unsloth/Qwen3-VL-4B-Thinking",
-        max_model_len=4096,
+        max_model_len=12000,
         dtype="float16",
         quantization="bitsandbytes", 
     )
@@ -537,6 +537,43 @@ def main_page():
         window.__pendingImages = [];
         window.__maxImages = {MAX_PASTED_IMAGES};
         window.__previewContainerId = 'paste-preview-container';
+        
+        // Config cho resize ảnh - giảm kích thước để tránh lỗi WebSocket
+        window.__imageMaxWidth = 800;
+        window.__imageMaxHeight = 800;
+        window.__imageQuality = 0.7;
+
+        // Hàm resize ảnh trước khi lưu vào pendingImages
+        async function resizeImageForTransmission(dataUrl) {{
+            return new Promise((resolve) => {{
+                const img = new Image();
+                img.onload = () => {{
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    // Tính toán kích thước mới giữ tỷ lệ
+                    if (width > window.__imageMaxWidth || height > window.__imageMaxHeight) {{
+                        const ratio = Math.min(
+                            window.__imageMaxWidth / width,
+                            window.__imageMaxHeight / height
+                        );
+                        width = Math.round(width * ratio);
+                        height = Math.round(height * ratio);
+                    }}
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // Convert sang JPEG với quality thấp hơn để giảm size
+                    resolve(canvas.toDataURL('image/jpeg', window.__imageQuality));
+                }};
+                img.onerror = () => resolve(dataUrl); // Fallback nếu lỗi
+                img.src = dataUrl;
+            }});
+        }}
 
         function renderPreviews() {{
             const container = document.getElementById(window.__previewContainerId);
@@ -594,7 +631,9 @@ def main_page():
                     reader.onload = () => resolve(reader.result);
                     reader.readAsDataURL(file);
                 }});
-                window.__pendingImages.push(dataUrl);
+                // QUAN TRỌNG: Resize ảnh TRƯỚC khi lưu để tránh lỗi WebSocket transmission
+                const resizedDataUrl = await resizeImageForTransmission(dataUrl);
+                window.__pendingImages.push(resizedDataUrl);
             }}
             renderPreviews();
         }}
